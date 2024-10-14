@@ -1,6 +1,7 @@
 const shopifyApi = require('../config/shopify_config');
 const pool = require('../config/postgres_db');
 const customers_query = require('../models/customers_query');
+const company_query = require('../models/company_query');
 const companyAssignCustomerAsContactMutation = require('../models/company_assign_contact_mutation');
 const companyContactDeleteMutation = require('../models/company_contact_delete_mutation');
 const companyContactRemoveMutation = require('../models/company_contact_remove_mutation');
@@ -19,7 +20,7 @@ const syncCustomersFromShopifyToDB = async (req, res) => {
     for (let customer of customers) {
       await addCustomerToDB(customer);
     }
-    res.status(200).json('Customers successfully synced from Shopify to DB');
+    res?.status(200).json('Customers successfully synced from Shopify to DB');
   } catch (error) {
     console.error('Error syncing customers from Shopify to DB:', error.message);
   }
@@ -82,7 +83,7 @@ const updateCustomer = async (req, res) => {
   const { firstName, lastName, phone, address1, address2, city, countryCode, zip, country, company_id, zone_code } = req.body;
 
   try {
-    // 기존 고객 정보 가져오기
+    // get exisitng customer data to avoid null value
     const existingCustomerResult = await pool.query('SELECT * FROM customers WHERE id = $1', [id]);
     const existingCustomer = existingCustomerResult.rows[0];
 
@@ -90,7 +91,6 @@ const updateCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found' });
     }
 
-    // 빈 값이 있는 경우 기존 값으로 채우기
     const updatedFirstName = firstName || existingCustomer.first_name;
     const updatedLastName = lastName || existingCustomer.last_name;
     const updatedPhone = phone || existingCustomer.phone;
@@ -124,7 +124,7 @@ const updateCustomer = async (req, res) => {
     }
 
     const customer = response.data.data.customerUpdate.customer;
-    console.log(customer.addresses[0]);
+
     // DB update
     await pool.query(`
       UPDATE customers
@@ -166,50 +166,50 @@ const updateCustomer = async (req, res) => {
 
 const assignCompanyToCustomer = async (customer_id, company_id) => {
   try {
-    // Remove customer from related tables (e.g., company_customer_contacts)
-    const existingContact = await pool.query('SELECT id FROM company_customer_contacts WHERE customer_id = $1', [customer_id]);
+    // Remove customer from related tables(compay_customer_contacts)
+    const existingContact = await pool.query('SELECT * FROM company_customer_contacts WHERE customer_id = $1', [customer_id]);
 
     if (existingContact.rows.length > 0) {
+      // remove contact from previous company
       const removeMutation = companyContactRemoveMutation(existingContact.rows[0].id);
       const responseRemove = await shopifyApi.post('', { query: removeMutation });
-
-      // const deleteMutation = companyContactDeleteMutation(existingContact.rows[0].id);
-      // const responseDelete = await shopifyApi.post('', { query: deleteMutation });
-
-      if (!responseRemove || responseRemove.status !== 200) {
-        console.error('Failed to delete company contact');
-        return;
-      }
-      console.log(responseRemove.data);
       const userErrors = responseRemove.data.data.companyContactRemoveFromCompany?.userErrors;
       if (userErrors && userErrors.length > 0) {
         console.log({ errors: userErrors });
         return;
       }
-
+      // delete previous record in related table
       await pool.query('DELETE FROM company_customer_contacts WHERE id = $1', [existingContact.rows[0].id]);
+
+      // update previouse company's contactCount
+      const originCompanyId = existingContact.rows[0]?.company_id;
+      const query = company_query(originCompanyId);
+      const responseUpdated = await shopifyApi.post('', { query: query });
+      const newCount = responseUpdated.data.data.company.contactsCount.count;
+      await pool.query('UPDATE companies SET contacts_count=$1 WHERE id=$2',[newCount, originCompanyId]);
     }
 
     // Assign company to customer
     const mutation = companyAssignCustomerAsContactMutation(company_id, customer_id);
     const responseAssign = await shopifyApi.post('', { query: mutation });
+    const assginedContact = responseAssign.data.data.companyAssignCustomerAsContact;
 
-    if (!responseAssign || responseAssign.status !== 200) {
-      console.error('Failed to assign company to customer');
-      return;
-    }
-
-    const userErrorsAssign = responseAssign.data.data.companyAssignCustomerAsContact?.userErrors;
+    const userErrorsAssign = assginedContact?.userErrors;
     if (userErrorsAssign && userErrorsAssign.length > 0) {
       console.log({ errors: userErrorsAssign });
       return;
     }
 
-    const contactId = responseAssign.data.data.companyAssignCustomerAsContact.companyContact?.id?.split('/').pop();
+    const contactId = assginedContact.companyContact?.id?.split('/').pop();
+    const contactsCount = assginedContact.companyContact.company.contactsCount.count;
+
     if (contactId) {
+      // add onboarding record in related table
       await pool.query('INSERT INTO company_customer_contacts (id, company_id, customer_id) VALUES ($1, $2, $3)', [contactId, company_id, customer_id]);
+      // update onboarding company's contactCount
+      await pool.query('UPDATE companies SET contacts_count=$1 WHERE id=$2',[contactsCount, company_id]);
     }
-    console.log({ message: 'Customer successfully assigned to company', data: responseAssign.data });
+    console.log({ message: 'Customer successfully assigned to company'});
   } catch (error) {
     console.error('Error assigning company to customer', error);
   }
@@ -226,13 +226,27 @@ const deleteCustomer = async (req, res) => {
     if (userErrors && userErrors.length > 0) {
       return res.status(400).json({ errors: userErrors });
     }
-    const deletedId = response.data.data.customerDelete.deletedCustomerId?.split('/').pop();
 
-    // Remove customer from related tables (e.g., company_customer_contacts)
-    await pool.query('DELETE FROM company_customer_contacts WHERE customer_id = $1', [deletedId]);
+    const deletedId = response.data.data.customerDelete.deletedCustomerId?.split('/').pop();
+    var associatedCompanyId;
+    const deletedCustomer = await pool.query('SELECT company_id FROM customers WHERE id=$1',[id]);
+    if (deletedCustomer.rows.length > 0) {
+      associatedCompanyId =  deletedCustomer.rows[0].company_id;
+      // Remove customer from related tables
+      await pool.query('DELETE FROM company_customer_contacts WHERE customer_id = $1', [deletedId]);
+    }
+
 
     // Remove from database
     await pool.query('DELETE FROM customers WHERE id = $1', [deletedId]);
+
+    // update company contacts number
+    if(associatedCompanyId != null){
+      const query = company_query(associatedCompanyId);
+      const responseUpdated = await shopifyApi.post('', { query: query });
+      const newCount = responseUpdated.data.data.company.contactsCount.count;
+      await pool.query('UPDATE companies SET contacts_count=$1 WHERE id=$2',[newCount, associatedCompanyId]);
+    }
 
     res.status(200).json({ message: `Customer ${deletedId} deleted` });
   } catch (error) {
@@ -241,7 +255,7 @@ const deleteCustomer = async (req, res) => {
 };
 
 
-// 로컬 DB에 회사 및 고객 정보 추가
+// function to add each customer to db
 const addCustomerToDB = async (customer) => {
   const {
     id,
@@ -267,7 +281,6 @@ const addCustomerToDB = async (customer) => {
   } = address;
 
   try {
-    // 고객 정보 삽입
     await pool.query(`
       INSERT INTO customers 
         (id, email, first_name, last_name, phone, image_url, number_of_orders, amount_spent, currency_code, locale, address1, address2, city, zone_code, country, zip, country_code, company_id, created_at)
@@ -297,24 +310,23 @@ const addCustomerToDB = async (customer) => {
       firstName || null, 
       lastName || null, 
       phone || null,
-      customer.image?.url || null, // image_url
-      numberOfOrders || 0, // number_of_orders
-      totalSpent || 0,  // amount_spent
-      currency, // currency_code
-      customer.locale || null, // locale
+      customer.image?.url || null,
+      numberOfOrders || 0, 
+      totalSpent || 0,  
+      currency, 
+      customer.locale || null, 
       address1 || null, 
       address2 || null, 
       city || null, 
-      provinceCode || null,  // zone_code
+      provinceCode || null, 
       country || null, 
       zip || null, 
       countryCode || null, 
       companyId || null,
-      createdAt // company_id
+      createdAt 
     ]);
 
-    
-    // 회사 정보가 있을 경우, 회사 정보 저장 또는 업데이트
+    // if company id exists, fin
     if (companyId) {
       console.log('Assign Company :'+companyId);
       const contactId = companyContactProfiles[0].id?.split('/').pop();

@@ -3,6 +3,12 @@ const companyAssignCustomerAsContactMutation = (company_id, customer_id) => `
     companyAssignCustomerAsContact(companyId: "gid://shopify/Company/${company_id}", customerId: "gid://shopify/Customer/${customer_id}") {
       companyContact {
         id
+        company {
+          id
+          contactsCount {
+            count
+          }
+        }
       }
       userErrors {
         field

@@ -14,7 +14,7 @@ const syncCompaniesFromShopifyToDB = async (req, res) => {
 
     const companies = response.data.data.companies.nodes;
 
-    // 각 회사 정보 DB에 저장 또는 업데이트
+    // add the data from shopify to db
     for (let company of companies) {
       const { id, name, contactsCount, createdAt, totalSpent } = company;
 
@@ -37,10 +37,10 @@ const syncCompaniesFromShopifyToDB = async (req, res) => {
       ]);          
     }
 
-    res.status(200).json({ message: 'Companies synced successfully from Shopify to DB' });
+    res?.status(200).json({ message: 'Companies synced successfully from Shopify to DB' });
   } catch (error) {
     console.error('Error syncing companies from Shopify to DB:', error.message);
-    res.status(500).json({ message: 'Error syncing companies from Shopify to DB', error: error.message });
+    res?.status(500).json({ message: 'Error syncing companies from Shopify to DB', error: error.message });
   }
 };
 
@@ -56,10 +56,9 @@ const getAllCompanies = async (req, res) => {
 
 // get company by id from DB
 const getCompanyById = async (req, res) => {
-  const { id } = req.params;  // 회사 ID
+  const { id } = req.params; 
 
   try {
-    // 로컬 DB에서 회사 정보 가져오기
     const result = await pool.query('SELECT * FROM companies WHERE id = $1', [id]);
     const company = result.rows[0];
 

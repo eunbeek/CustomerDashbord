@@ -2,9 +2,9 @@ const express = require('express');
 const dotenv = require('dotenv');
 const customerRoutes = require('./routes/customer_routes');
 const companyRoutes = require('./routes/company_routes');
-const pool = require('./config/postgres_db');
+const { syncDatasWithShopify } = require('./controllers/customer_scheduler');
 
-// api config 
+// api config
 dotenv.config();
 const app = express();
 app.use(express.json());
@@ -36,4 +36,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  syncDatasWithShopify;
 });
