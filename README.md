@@ -10,7 +10,7 @@ CustomerDashboard provides a seamless interface for managing customer data. This
 
 Watch a demo of the CustomerDashboard on YouTube:
 
-[![CustomerDashboard Demo](https://img.youtube.com/vi/jAUz44ib2Uo/0.jpg)]([https://www.youtube.com/watch?v=YOUR_VIDEO_ID_HERE](https://youtu.be/jAUz44ib2Uo))
+[![CustomerDashboard Demo](https://img.youtube.com/vi/jAUz44ib2Uo/0.jpg)](https://youtu.be/jAUz44ib2Uo)
 
 ### **Main Features**
 
